@@ -37,6 +37,10 @@ import kafka.consumer.ConsumerIterator;
 import kafka.consumer.KafkaStream;
 import kafka.javaapi.consumer.ConsumerConnector;
 
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+
 public class KafkaConsumer 
 {
 	private final Logger log = LoggerFactory.getLogger(KafkaConsumer.class);
@@ -75,7 +79,8 @@ public class KafkaConsumer
 		Map<String, List<KafkaStream<byte[], byte[]>>> messageStreams = consumer.createMessageStreams(topicCountMap);
 		KafkaStream<byte[], byte[]> stream = messageStreams.get(topic).get(0);// 获取每次接收到的这个数据
 		ConsumerIterator<byte[], byte[]> iterator = stream.iterator();
-		while (iterator.hasNext()) {
+		//改成了定时器
+		if (iterator.hasNext()) {
 			String message = new String(iterator.next().message());
 			System.out.println("接收到的监控信息是: " + message);
 			Report report=new Gson().fromJson(message,Report.class);
@@ -100,10 +105,7 @@ public class KafkaConsumer
 //			List<ApplicationInfos> appList=report.clusterInfo.applicationInfosList;
 //			log.info("接收到的app编号是: " + appList.toString());
 			//
-			send(reportAll);
 			
-			String storeDir="/user/vpe.cripac";
-			storeJson(hdfs,storeDir,new Gson().toJson(reportAll));
 		}
 	}
 
@@ -115,7 +117,7 @@ public class KafkaConsumer
 		return Consumer.createJavaConsumerConnector(new ConsumerConfig(properties));
 	}
 
-	public static void main(String[] args) throws YarnException, IOException, URISyntaxException, ParserConfigurationException, SAXException {
+	public static void main(String[] args) throws Exception {
 //		String ipString;
 //        try {
 //        	ipString=WebToolUtils.getLocalIP();
@@ -129,11 +131,24 @@ public class KafkaConsumer
 		Report reportAll=new Report();
 		ConsumerConnector consumer = kafkaConsumer.createConsumer();
 		FileSystem hdfs=kafkaConsumer.HDFSOperation();
-		for (int i = 0; i < nodeNamesList.size(); i++) {
-			
-			kafkaConsumer.report(nodeNamesList.get(i),reportAll,consumer,hdfs);// 使用kafka集群中创建好的主题 test
-		}
 		
+		kafkaConsumer.time(nodeNamesList, reportAll, consumer, hdfs);
+		
+		
+		
+	}
+	
+	public void basic(List<String> nodeNamesList, Report reportAll, ConsumerConnector consumer, FileSystem hdfs)
+			throws Exception {
+		for (int i = 0; i < nodeNamesList.size(); i++) {
+
+			report(nodeNamesList.get(i), reportAll, consumer, hdfs);// 使用kafka集群中创建好的主题
+																	// test
+		}
+		send(reportAll);
+
+		String storeDir = "/user/vpe.cripac";
+		storeJson(hdfs, storeDir, new Gson().toJson(reportAll));
 	}
 	
 	/**
@@ -203,5 +218,26 @@ public class KafkaConsumer
                 REPORT_TOPIC+"all",
                 propCenter.kafkaNumPartitions, propCenter.kafkaReplFactor);
 		this.reportProducer.send(new ProducerRecord<>(REPORT_TOPIC+"all", "all", new Gson().toJson(reportAll)));
+	}
+	
+	public void time(List<String> nodeNamesList,Report reportAll,ConsumerConnector consumer,FileSystem hdfs) {
+
+		Runnable runnable = new Runnable() {
+			public void run() {
+				// task to run goes here
+				// System.out.println("Hello !!");
+				try {
+					basic(nodeNamesList, reportAll, consumer, hdfs);;
+					log.info("本次结束----------------");
+				} catch (Exception e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+			}
+		};
+		ScheduledExecutorService service = Executors.newSingleThreadScheduledExecutor();
+		// 第二个参数为首次执行的延时时间，第三个参数为定时执行的间隔时间
+//		log.info("每次间隔时间是：" + argsMap.get("copy.time") + "s");
+		service.scheduleAtFixedRate(runnable, 10, 10,TimeUnit.SECONDS);
 	}
 }
