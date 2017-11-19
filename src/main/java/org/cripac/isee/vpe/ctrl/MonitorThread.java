@@ -26,15 +26,25 @@ import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
 
 import javax.management.InstanceNotFoundException;
 import javax.management.MalformedObjectNameException;
 import javax.management.ReflectionException;
 
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.yarn.api.records.ApplicationAttemptReport;
+import org.apache.hadoop.yarn.api.records.ApplicationId;
 import org.apache.hadoop.yarn.api.records.ApplicationReport;
 import org.apache.hadoop.yarn.api.records.ApplicationResourceUsageReport;
+import org.apache.hadoop.yarn.api.records.ContainerId;
+import org.apache.hadoop.yarn.api.records.ContainerReport;
+import org.apache.hadoop.yarn.api.records.ContainerState;
+import org.apache.hadoop.yarn.api.records.NodeReport;
+import org.apache.hadoop.yarn.api.records.NodeState;
 import org.apache.hadoop.yarn.api.records.Resource;
 import org.apache.hadoop.yarn.api.records.YarnApplicationState;
 import org.apache.hadoop.yarn.client.api.YarnClient;
@@ -44,12 +54,20 @@ import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.cripac.isee.util.WebToolUtils;
 import org.cripac.isee.vpe.entities.Report;
-import org.cripac.isee.vpe.entities.Report.ApplicationInfos;
+import org.cripac.isee.vpe.entities.Report.ClusterInfo;
+import org.cripac.isee.vpe.entities.Report.ClusterInfo.ApplicationInfos;
+import org.cripac.isee.vpe.entities.Report.ClusterInfo.ApplicationInfos.ContarinerInfos;
+import org.cripac.isee.vpe.entities.Report.ClusterInfo.ApplicationInfos.EachAppNode;
+import org.cripac.isee.vpe.entities.Report.ClusterInfo.Nodes;
+import org.cripac.isee.vpe.entities.Report.ServerInfo;
+import org.cripac.isee.vpe.entities.Report.ServerInfo.DevInfo;
+import org.cripac.isee.vpe.entities.Report.ServerInfo.DevInfo.ProcessesDevInfo;
 import org.cripac.isee.vpe.util.kafka.KafkaHelper;
 import org.cripac.isee.vpe.util.logging.Logger;
 
 import com.google.gson.Gson;
 import com.sun.management.OperatingSystemMXBean;
+
 
 public class MonitorThread extends Thread {
 
@@ -105,7 +123,7 @@ public class MonitorThread extends Thread {
         this.reportProducer = new KafkaProducer<>(propCenter.getKafkaProducerProp(true));
 
         KafkaHelper.createTopic(propCenter.zkConn, propCenter.zkSessionTimeoutMs, propCenter.zkConnectionTimeoutMS,
-                REPORT_TOPIC,
+                REPORT_TOPIC+getServerName(),
                 propCenter.kafkaNumPartitions, propCenter.kafkaReplFactor);
 
         logger.info("Running with " + osBean.getAvailableProcessors() + " " + osBean.getArch() + " processors");
@@ -116,61 +134,7 @@ public class MonitorThread extends Thread {
     public MonitorThread(){
     	
     }
-
-	@Override
-    public void run() {
-    	Report report =getReport();
-        //noinspection InfiniteLoopStatement
-        int count=0;
-        while (true) {
-        	getDevInfo(report,count);
-        	try {
-				appReport(report);
-			} catch (YarnException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-			} catch (IOException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-			}
-        	getAppInfoByNode(report);
-        	
-        	logger.info(new Gson().toJson(report));
-            this.reportProducer.send(new ProducerRecord<>(REPORT_TOPIC, report.nodeName, new Gson().toJson(report)));
-            
-            clearList(report);
-            try {
-                sleep(10000);
-            } catch (InterruptedException ignored) {
-            }
-            count++;
-//            if (count>1) {
-//            	report.processNumList.clear();
-//            }
-        }
-    }
-
-	public void clearList(Report report){
-		for (int i = 0; i < report.deviceCount; ++i) {
-        	Report.DevInfo info = report.devInfos[i];
-        	List<Integer> processNumList=info.processNumList;
-        	if (processNumList!=null) {
-				
-        		processNumList.clear();
-			}
-        }
-		List<Integer> processNumAllList=report.processNumAllList;
-		List<Report.DevInfo.ProcessesDevInfo> processAllList=report.processAllList;
-		if (processNumAllList!=null) {
-			
-			processNumAllList.clear();
-		}
-		if (processAllList!=null) {
-			
-			processAllList.clear();
-		}
-	}
-	
+    
 	/**
 	 * 加载动态链接库
 	 */
@@ -187,107 +151,184 @@ public class MonitorThread extends Thread {
             throw t;
         }
     }
+
+	@Override
+    public void run() {
+    	Report report =initReport();
+    	ServerInfo serverInfo=getServerInfoReport(report);
+        //noinspection InfiniteLoopStatement
+        int count=0;
+        while (true) {
+        	getDevInfo(report,serverInfo,count);
+        	try {
+//				appReport(report);
+				getClusterReport(report);
+			} catch (Exception e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			} 
+        	getAppInfoByNode(report,serverInfo);
+        	
+        	logger.info(new Gson().toJson(report));
+            this.reportProducer.send(new ProducerRecord<>(REPORT_TOPIC+getServerName(), getServerName(), new Gson().toJson(report)));
+            
+            clearList(report,serverInfo);
+            try {
+                sleep(10000);
+            } catch (InterruptedException ignored) {
+            }
+            count++;
+//            if (count>1) {
+//            	report.processNumList.clear();
+//            }
+        }
+    }
+
+	public void clearList(Report report,ServerInfo serverInfo){
+		for (int i = 0; i < serverInfo.deviceCount; ++i) {
+        	DevInfo info = serverInfo.devInfosList.get(i);
+        	List<Integer> processNumList=info.processNumList;
+        	if (processNumList!=null) {
+				
+        		processNumList.clear();
+			}
+        }
+		List<Integer> processNumAllList=serverInfo.processNumAllList;
+		List<ProcessesDevInfo> processAllList=serverInfo.processAllList;
+		if (processNumAllList!=null) {
+			
+			processNumAllList.clear();
+		}
+		if (processAllList!=null) {
+			
+			processAllList.clear();
+		}
+	}
+	
+
     
-    public Report getReport(){
+    public Report initReport(){
     	Report report = new Report();
     	
-        report.nodeName = getNodeName();
-        report.ip=getIp();
+    	report.serverInfosMap=new HashMap<>();
+    	String nodeName=getServerName();
+    	ServerInfo serverInfo=new ServerInfo();
+    	//put之后才有值，同时可以再put之后再给其中的对象赋值，是可以拿到的
+    	report.serverInfosMap.put(nodeName, serverInfo);
+    	report.clusterInfo=new ClusterInfo();
+    	
+    	return report;
+    }
+    
+    public ServerInfo getServerInfoReport(Report report){
+    	
+    	Map <String,ServerInfo> serverInfosMap=report.serverInfosMap;
+    	ServerInfo serverInfo=null;
+    	for (Entry<String, ServerInfo> entry : serverInfosMap.entrySet()) {
+			serverInfo=entry.getValue();
+		}
+    	serverInfo.nodeName = getServerName();
+    	serverInfo.ip=getIp();
         
-        logger.info("hostname："+report.nodeName+",ip:"+report.ip);
+        logger.info("hostname："+serverInfo.nodeName+",ip:"+serverInfo.ip);
 
-        report.cpuNum=getCpuNum();
-        report.cpuCore=getCpuCore();
+        serverInfo.cpuNum=getCpuNum();
+        serverInfo.cpuCore=getCpuCore();
         
         int nvmlInitRet = initNVML();
         if (nvmlInitRet == 0) {
-        	report.deviceCount = getDeviceCount();
-            logger.info("Running with " + report.deviceCount + " GPUs.");
+        	serverInfo.deviceCount = getDeviceCount();
+            logger.info("Running with " + serverInfo.deviceCount + " GPUs.");
         } else {
-        	report.deviceCount = 0;
+        	serverInfo.deviceCount = 0;
             logger.info("Cannot initialize NVML: " + nvmlInitRet);
         }
         
-        report.devInfos = new Report.DevInfo[report.deviceCount];
-        report.devNumList=new ArrayList<>();
+        serverInfo.devInfosList = new ArrayList<>();
+        serverInfo.devNumList=new ArrayList<>();
         
         
-        for (int i = 0; i < report.deviceCount; ++i) {
-            report.devInfos[i] = new Report.DevInfo();
-            report.devNumList.add(i);
+        for (int i = 0; i < serverInfo.deviceCount; ++i) {
+        	serverInfo.devInfosList.add(new DevInfo());
+            serverInfo.devNumList.add(i);
         }
 
         logger.debug("Starting monitoring gpu!");
-        return report;
+        return serverInfo;
     }
     
     
-    public void getDevInfo(Report report,int count){
-    	report.cpuVirtualNum=getCpuVirtualNum();
+    public void getDevInfo(Report report,ServerInfo serverInfo,int count){
+    	
+    	serverInfo.cpuVirtualNum=getCpuVirtualNum();
     	   											// 剩余内存
-    	report.usedMem = (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024);
-        report.jvmMaxMem = runtime.maxMemory() / (1024 * 1024);
-        report.jvmTotalMem = runtime.totalMemory() / (1024 * 1024);
-        report.physicTotalMem = osBean.getTotalPhysicalMemorySize() / (1024 * 1024);
+    	serverInfo.usedMem = (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024);
+    	serverInfo.jvmMaxMem = runtime.maxMemory() / (1024 * 1024);
+    	serverInfo.jvmTotalMem = runtime.totalMemory() / (1024 * 1024);
+    	serverInfo.physicTotalMem = osBean.getTotalPhysicalMemorySize() / (1024 * 1024);
         
         logger.info("Memory consumption: "
-                + report.usedMem + "/"
-                + report.jvmMaxMem + "/"
-                + report.jvmTotalMem + "/"
-                + report.physicTotalMem + "M");
+                + serverInfo.usedMem + "/"
+                + serverInfo.jvmMaxMem + "/"
+                + serverInfo.jvmTotalMem + "/"
+                + serverInfo.physicTotalMem + "M");
 
-        report.procCpuLoad = (int) (osBean.getProcessCpuLoad() * 100);
-        report.sysCpuLoad = (int) (osBean.getSystemCpuLoad() * 100);
-        logger.info("CPU load: " + report.procCpuLoad + "/" + report.sysCpuLoad + "%");
+        serverInfo.procCpuLoad = (int) (osBean.getProcessCpuLoad() * 100);
+        serverInfo.sysCpuLoad = (int) (osBean.getSystemCpuLoad() * 100);
+        logger.info("CPU load: " + serverInfo.procCpuLoad + "/" + serverInfo.sysCpuLoad + "%");
 
         StringBuilder stringBuilder = new StringBuilder("GPU Usage:");
-        report.processNumAllList=new ArrayList<>();
-        report.processAllList=new ArrayList<>();
-        for (int i = 0; i < report.deviceCount; ++i) {
-            Report.DevInfo info = report.devInfos[i];
-            info.index=i;
-            info.fanSpeed = getFanSpeed(i);
-            info.utilRate = getUtilizationRate(i);
-            info.usedMem = getUsedMemory(i);
-            info.totalMem = getTotalMemory(i);
-            info.temp = getTemperature(i);
-            info.slowDownTemp = getSlowDownTemperatureThreshold(i);
-            info.shutdownTemp = getShutdownTemperatureThreshold(i);
-            info.powerUsage = getPowerUsage(i);
-            info.powerLimit = getPowerLimit(i);
-            info.infoCount=getInfoCount(i);
-            info.processNumList=new ArrayList<>();
-            info.processesDevInfos=new Report.DevInfo.ProcessesDevInfo[info.infoCount];
+        serverInfo.processNumAllList=new ArrayList<>();
+        serverInfo.processAllList=new ArrayList<>();
+        for (int i = 0; i < serverInfo.deviceCount; ++i) {
+            DevInfo devInfo = serverInfo.devInfosList.get(i);
+            devInfo.index=i;
+            devInfo.fanSpeed = getFanSpeed(i);
+            devInfo.utilRate = getUtilizationRate(i);
+            devInfo.usedMem = getUsedMemory(i);
+            devInfo.totalMem = getTotalMemory(i);
+            devInfo.temp = getTemperature(i);
+            devInfo.slowDownTemp = getSlowDownTemperatureThreshold(i);
+            devInfo.shutdownTemp = getShutdownTemperatureThreshold(i);
+            devInfo.powerUsage = getPowerUsage(i);
+            devInfo.powerLimit = getPowerLimit(i);
+            devInfo.infoCount=getInfoCount(i);
+            devInfo.processNumList=new ArrayList<>();
+            devInfo.processesDevInfosList=new ArrayList<>();
 //            if (count==0) {
 				
-            	for (int j = 0; j < info.infoCount; j++) {
-            		info.processesDevInfos[j]=new Report.DevInfo.ProcessesDevInfo();
-            		info.processNumList.add(i);
-            	}
-            	for (int j = 0; j < info.infoCount; j++) {
-					Report.DevInfo.ProcessesDevInfo processesDevInfo = info.processesDevInfos[j];
+//            	for (int j = 0; j < devInfo.infoCount; j++) {
+//            		devInfo.processesDevInfosList.add(new ProcessesDevInfo());
+//            		devInfo.processNumList.add(i);
+//            	}
+            	for (int j = 0; j < devInfo.infoCount; j++) {
+            		
+					ProcessesDevInfo processesDevInfo = new ProcessesDevInfo();
+//							devInfo.processesDevInfosList.get(j);
 					processesDevInfo.usedGpuMemory = getUsedGpuMemory(i,j)/ (1024 * 1024);
 					processesDevInfo.pid = getPid(i,j);
 					processesDevInfo.index=i;
-					report.processAllList.add(processesDevInfo);
+					devInfo.processesDevInfosList.add(processesDevInfo);
+					serverInfo.processAllList.add(processesDevInfo);
+					devInfo.processNumList.add(i);
             	}
 //			}
-            	report.processNumAllList.addAll(info.processNumList);	
+            	serverInfo.processNumAllList.addAll(devInfo.processNumList);	
             stringBuilder.append("\n|Index\t|Fan\t|Util\t|Mem(MB)\t|Temp(C)\t|Pow\t|infoCount");
-            stringBuilder.append("\n|").append(info.index)
+            stringBuilder.append("\n|").append(devInfo.index)
                     .append("\t|")
-                    .append(info.fanSpeed)
+                    .append(devInfo.fanSpeed)
                     .append("\t|")
-                    .append(String.format("%3d", info.utilRate)).append('%')
+                    .append(String.format("%3d", devInfo.utilRate)).append('%')
                     .append("\t|")
-                    .append(String.format("%5d", info.usedMem / (1024 * 1024)))
-                    .append("/").append(String.format("%5d", info.totalMem / (1024 * 1024)))
+                    .append(String.format("%5d", devInfo.usedMem / (1024 * 1024)))
+                    .append("/").append(String.format("%5d", devInfo.totalMem / (1024 * 1024)))
                     .append("\t|")
-                    .append(info.temp).append("/").append(info.slowDownTemp).append("/").append(info.shutdownTemp)
+                    .append(devInfo.temp).append("/").append(devInfo.slowDownTemp).append("/").append(devInfo.shutdownTemp)
                     .append("\t|")
-                    .append(info.powerUsage).append("/").append(info.powerLimit)
+                    .append(devInfo.powerUsage).append("/").append(devInfo.powerLimit)
             		.append("\t|")
-            		.append(info.infoCount);
+            		.append(devInfo.infoCount);
         }
         
         logger.info(stringBuilder.toString());
@@ -296,7 +337,7 @@ public class MonitorThread extends Thread {
 //        return report;
     }
     
-    public String getNodeName(){
+    public String getServerName(){
     	String nodeName1;
         try {
             nodeName1 = InetAddress.getLocalHost().getHostName();
@@ -371,37 +412,40 @@ public class MonitorThread extends Thread {
     	return sb.toString();
     }
     
+    
+    public void getClusterReport(Report report)throws YarnException, IOException{
+		YarnClient yarnClient = getYarnClient();
+		getNodes(report, yarnClient);
+		appReport(report,yarnClient);
+	}
+    
     /**
 	 * 得到yarn上的application的cpu和内存
 	 * LANG
 	 * @throws YarnException
 	 * @throws IOException
 	 */
-	public void appReport(Report report) throws YarnException, IOException {
+	public void appReport(Report report,YarnClient yarnClient) throws YarnException, IOException {
 // 		ApplicationResourceUsageReport applicationResourceUsageReport=new ApplicationReportPBImpl().getApplicationResourceUsageReport();
-		YarnConfiguration conf = new YarnConfiguration();
-//		conf.set("fs.defaultFS", "hdfs://rtask-nod8:8020");
-		conf.set("yarn.resourcemanager.scheduler.address", "rtask-nod8:8030");
-		String hadoopHome = System.getenv("HADOOP_HOME");
-		conf.addResource(new Path(hadoopHome + "/etc/hadoop/core-site.xml"));
-		conf.addResource(new Path(hadoopHome + "/etc/hadoop/yarn-site.xml"));
-		YarnClient yarnClient = YarnClient.createYarnClient();
-		yarnClient.init(conf);
-		yarnClient.start();
+		
 		List<ApplicationReport> list = yarnClient.getApplications(EnumSet.of(YarnApplicationState.RUNNING));
 		if (list != null) {
 			if (list.size() > 0) {
-				
-				report.applicationInfos = new Report.ApplicationInfos[list.size()];
-				for (int i = 0; i < list.size(); i++) {
-					report.applicationInfos[i]=new Report.ApplicationInfos();
-				}
+				List<ApplicationInfos> applicationInfosList=new ArrayList<>();
+				report.clusterInfo.applicationInfosList=applicationInfosList;
+//				report.clusterInfo.applicationInfosList=new ArrayList<>();
+//				report.applicationInfos = new Report.ApplicationInfos[list.size()];
+//				for (int i = 0; i < list.size(); i++) {
+////					report.applicationInfos[i]=new Report.ApplicationInfos();
+//					report.clusterInfo.applicationInfosList.add(new ApplicationInfos());
+//				}
 				
 				for (int i = 0; i < list.size(); i++) {
 					ApplicationReport applicationReport=list.get(i);
 					ApplicationResourceUsageReport applicationResourceUsageReport = applicationReport.getApplicationResourceUsageReport();
-					Report.ApplicationInfos applicationInfo = report.applicationInfos[i];
-					
+					ApplicationInfos applicationInfo = new ApplicationInfos();
+//					report.clusterInfo.applicationInfosList.get(i);
+					report.clusterInfo.applicationInfosList.add(applicationInfo);
 					//MB
 //					long memory = applicationResourceUsageReport.getMemorySeconds();
 //					long vcore = applicationResourceUsageReport.getVcoreSeconds();
@@ -414,7 +458,8 @@ public class MonitorThread extends Thread {
 					//保留的
 					Resource reservedResource = applicationResourceUsageReport.getReservedResources();
 					
-					applicationInfo.applicationId=applicationReport.getApplicationId()+"";
+					ApplicationId applicationId=applicationReport.getApplicationId();
+					applicationInfo.applicationId=applicationId+"";
 					applicationInfo.neededResourceMemory=neededResource.getMemory();
 					applicationInfo.neededResourceVcore=neededResource.getVirtualCores();
 					applicationInfo.usedResourceMemory=usedResource.getMemory();
@@ -426,9 +471,126 @@ public class MonitorThread extends Thread {
 							+",neededResourceMemory:"+applicationInfo.neededResourceMemory+",neededResourceVcore:"+applicationInfo.neededResourceVcore
 							+",usedResourceMemory:"+applicationInfo.usedResourceMemory+",usedResourceVcore:"+applicationInfo.usedResourceVcore
 							+",reservedResourceMemory:"+applicationInfo.reservedResourceMemory+",reservedResourceVcore:"+applicationInfo.reservedResourceVcore);
+					
+					//container
+					getContainers(report,applicationInfo, yarnClient, applicationId);
 				}
 			}
 		}
+	}
+	
+	
+	
+	
+	
+	public void getAppInfoByNode(Report report,ServerInfo serverInfo){
+		List<ApplicationInfos> applicationInfosList=report.clusterInfo.applicationInfosList;
+//		report.clusterInfo.applicationInfosList=applicationInfosList;
+		if (applicationInfosList!=null) {
+			if (applicationInfosList.size()>0) {
+				
+				for (int i = 0; i < applicationInfosList.size(); i++) {
+					ApplicationInfos applicationInfo = applicationInfosList.get(i);
+					applicationInfo.eachAppNodeMap=new HashMap<>();
+					EachAppNode eachAppNode=new EachAppNode();
+					String nodeName=getServerName();
+					applicationInfo.eachAppNodeMap.put(nodeName, eachAppNode);
+					eachAppNode.pid=getPID();
+					eachAppNode.ip=serverInfo.ip;
+					eachAppNode.nodeName=serverInfo.nodeName;
+					List<ProcessesDevInfo> processAllList=serverInfo.processAllList;
+					if (processAllList!=null) {
+						if (processAllList.size()>0) {
+							
+							for (int j = 0; j < processAllList.size(); j++) {
+								ProcessesDevInfo processesDevInfo=processAllList.get(j);
+								if (processesDevInfo.pid==eachAppNode.pid) {
+									eachAppNode.index=processesDevInfo.index;
+									eachAppNode.usedGpuMemory=processesDevInfo.usedGpuMemory;
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	
+	public void getNodes(Report report,YarnClient yarnClient) throws YarnException, IOException{
+		List<NodeReport> nodeList=yarnClient.getNodeReports(NodeState.RUNNING);
+		List<Nodes> nodeInfosList=new ArrayList<>();
+		report.clusterInfo.nodeInfosList=nodeInfosList;
+//		for (int i = 0; i < nodeList.size(); i++) {
+//			nodeInfosList.add(new Nodes());
+//		}
+		for (int i = 0; i < nodeList.size(); i++) {
+			Nodes nodes=new Nodes();
+			nodeInfosList.add(nodes);
+			
+			NodeReport nodeReport=nodeList.get(i);
+			nodes.name=nodeReport.getNodeId().getHost();
+			
+			Resource capResource=nodeReport.getCapability();
+			nodes.capabilityCpu=capResource.getVirtualCores();
+			nodes.capabilityMemory=capResource.getMemory();
+			
+			Resource usedResource=nodeReport.getUsed();
+			nodes.usedCpu=usedResource.getVirtualCores();
+			nodes.usedMemory=usedResource.getMemory();
+			
+		}
+	}
+	
+	public void getContainers(Report report, ApplicationInfos applicationInfo, YarnClient yarnClient,
+			ApplicationId applicationId) throws YarnException, IOException {
+		List<ApplicationAttemptReport> applicationAttemptReportsList = yarnClient.getApplicationAttempts(applicationId);
+		List<ContarinerInfos> contarinerInfosList = new ArrayList<>();
+		applicationInfo.contarinerInfosList = contarinerInfosList;
+		if (applicationAttemptReportsList != null) {
+			if (applicationAttemptReportsList.size() > 0) {
+				System.out.println("每个application的attempt的大小是：" + applicationAttemptReportsList.size());
+				for (int i = 0; i < applicationAttemptReportsList.size(); i++) {
+					ApplicationAttemptReport applicationAttemptReport = applicationAttemptReportsList.get(i);
+					List<ContainerReport> containerReportsList = yarnClient.getContainers(applicationAttemptReport.getApplicationAttemptId());
+					if (containerReportsList != null) {
+						if (containerReportsList.size() > 0) {
+							for (int j = 0; j < containerReportsList.size(); j++) {
+								ContainerReport containerReport = containerReportsList.get(j);
+								ContainerId containerId = containerReport.getContainerId();
+								ContainerState containerState = containerReport.getContainerState();
+								Resource allocatedResource = containerReport.getAllocatedResource();
+
+								ContarinerInfos contarinerInfos = new ContarinerInfos();
+								contarinerInfos.containerId = containerId + "";
+								contarinerInfos.allocatedCpu = allocatedResource.getVirtualCores();
+								contarinerInfos.allocatedMemory = allocatedResource.getMemory();
+								contarinerInfos.state = containerState + "";
+								contarinerInfosList.add(contarinerInfos);
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	/**
+	 * 得到yarn
+	 * LANG
+	 * @return
+	 */
+	public YarnClient getYarnClient(){
+		YarnConfiguration conf = new YarnConfiguration();
+//		conf.set("fs.defaultFS", "hdfs://rtask-nod8:8020");
+		conf.set("yarn.resourcemanager.scheduler.address", "rtask-nod8:8030");
+		String hadoopHome = System.getenv("HADOOP_HOME");
+		conf.addResource(new Path(hadoopHome + "/etc/hadoop/core-site.xml"));
+		conf.addResource(new Path(hadoopHome + "/etc/hadoop/yarn-site.xml"));
+		YarnClient yarnClient = YarnClient.createYarnClient();
+		yarnClient.init(conf);
+		yarnClient.start();
+		return yarnClient;
 	}
 	
 	/**
@@ -446,28 +608,5 @@ public class MonitorThread extends Thread {
 	    }
 
 	    return 0;
-	}
-	
-	public void getAppInfoByNode(Report report){
-		ApplicationInfos[] applicationInfos=report.applicationInfos;
-		for (int i = 0; i < applicationInfos.length; i++) {
-			Report.ApplicationInfos applicationInfo = report.applicationInfos[i];
-			applicationInfo.pid=getPID();
-			List<Report.DevInfo.ProcessesDevInfo> processAllList=report.processAllList;
-			if (processAllList!=null) {
-				if (processAllList.size()>0) {
-					
-					for (int j = 0; j < processAllList.size(); j++) {
-						Report.DevInfo.ProcessesDevInfo processesDevInfo=processAllList.get(j);
-						if (processesDevInfo.pid==applicationInfo.pid) {
-							applicationInfo.index=processesDevInfo.index;
-							applicationInfo.usedGpuMemory=processesDevInfo.usedGpuMemory;
-						}
-					}
-				}
-			}
-			applicationInfo.ip=report.ip;
-			applicationInfo.nodeName=report.nodeName;
-		}
 	}
 }

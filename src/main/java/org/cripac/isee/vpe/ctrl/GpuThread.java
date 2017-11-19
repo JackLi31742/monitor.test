@@ -1,24 +1,11 @@
 package org.cripac.isee.vpe.ctrl;
 
-import java.io.IOException;
-import java.util.EnumSet;
-import java.util.List;
-
 import javax.annotation.Nonnull;
 
-import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.yarn.api.records.ApplicationReport;
-import org.apache.hadoop.yarn.api.records.ApplicationResourceUsageReport;
-import org.apache.hadoop.yarn.api.records.Resource;
-import org.apache.hadoop.yarn.api.records.YarnApplicationState;
-import org.apache.hadoop.yarn.client.api.YarnClient;
-import org.apache.hadoop.yarn.conf.YarnConfiguration;
-import org.apache.hadoop.yarn.exceptions.YarnException;
 import org.cripac.isee.util.Singleton;
 import org.cripac.isee.vpe.util.logging.Logger;
 import org.cripac.isee.vpe.util.logging.SynthesizedLogger;
 import org.cripac.isee.vpe.util.logging.SynthesizedLoggerFactory;
-import org.slf4j.LoggerFactory;
 
 
 public class GpuThread {
