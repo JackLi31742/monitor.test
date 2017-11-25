@@ -33,6 +33,7 @@ import org.apache.hadoop.yarn.api.records.YarnApplicationState;
 import org.apache.hadoop.yarn.client.api.YarnClient;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.exceptions.YarnException;
+import org.apache.hadoop.yarn.util.ConverterUtils;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.cripac.isee.util.WebToolUtils;
@@ -544,10 +545,8 @@ public class MonitorThread extends Thread {
 								ContainerState containerState = containerReport.getContainerState();
 								Resource allocatedResource = containerReport.getAllocatedResource();
 								String hostName=containerReport.getAssignedNode().getHost();
-								String DiagnosticsInfo=containerReport.getDiagnosticsInfo();
-								String logurlString=containerReport.getLogUrl();
-								String NodeHttpAddress=containerReport.getNodeHttpAddress();
-								System.out.println(containerId+":"+hostName+","+DiagnosticsInfo+","+logurlString+","+NodeHttpAddress);
+								String containerIdStr = ConverterUtils.toString(containerId);
+								System.out.println(containerId+":"+hostName+":"+containerIdStr);
 
 								ContarinerInfos contarinerInfos = new ContarinerInfos();
 								contarinerInfos.containerId = containerId + "";
