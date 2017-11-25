@@ -63,7 +63,7 @@ public class MonitorThread extends Thread {
     private Runtime runtime = Runtime.getRuntime();
     private OperatingSystemMXBean osBean = ManagementFactory.getPlatformMXBean(OperatingSystemMXBean.class);
     private YarnClient yarnClient;
-    private LinuxContainerExecutor linuxContainerExecutor;
+//    private LinuxContainerExecutor linuxContainerExecutor;
     /**
      * native 方法
      * LANG
@@ -107,7 +107,7 @@ public class MonitorThread extends Thread {
         this.logger = logger;
         this.reportProducer = new KafkaProducer<>(propCenter.getKafkaProducerProp(true));
         yarnClient = getYarnClient();
-        linuxContainerExecutor=new LinuxContainerExecutor();
+//        linuxContainerExecutor=new LinuxContainerExecutor();
         KafkaHelper.createTopic(propCenter.zkConn, propCenter.zkSessionTimeoutMs, propCenter.zkConnectionTimeoutMS,
                 REPORT_TOPIC+getServerName(),
                 propCenter.kafkaNumPartitions, propCenter.kafkaReplFactor);
@@ -544,11 +544,12 @@ public class MonitorThread extends Thread {
 							for (int j = 0; j < containerReportsList.size(); j++) {
 								ContainerReport containerReport = containerReportsList.get(j);
 								ContainerId containerId = containerReport.getContainerId();
+								String containerIdStr = ConverterUtils.toString(containerId);
 								ContainerState containerState = containerReport.getContainerState();
 								Resource allocatedResource = containerReport.getAllocatedResource();
 								String hostName=containerReport.getAssignedNode().getHost();
+								LinuxContainerExecutor linuxContainerExecutor=new LinuxContainerExecutor();
 								String pid=linuxContainerExecutor.getProcessId(containerId);
-								String containerIdStr = ConverterUtils.toString(containerId);
 								System.out.println(containerIdStr+":"+hostName+":"+pid);
 
 								ContarinerInfos contarinerInfos = new ContarinerInfos();
