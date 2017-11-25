@@ -7,6 +7,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 import javax.xml.parsers.ParserConfigurationException;
 
@@ -16,19 +19,17 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.yarn.api.records.NodeReport;
 import org.apache.hadoop.yarn.api.records.NodeState;
-import org.apache.hadoop.yarn.api.records.Resource;
 import org.apache.hadoop.yarn.client.api.YarnClient;
-import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.exceptions.YarnException;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.cripac.isee.vpe.entities.Report;
 import org.cripac.isee.vpe.entities.Report.ClusterInfo.ApplicationInfos;
-import org.cripac.isee.vpe.entities.Report.ClusterInfo.Nodes;
+import org.cripac.isee.vpe.util.kafka.KafkaHelper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.xml.sax.SAXException;
-import org.cripac.isee.vpe.util.kafka.KafkaHelper;
+
 import com.google.gson.Gson;
 
 import kafka.consumer.Consumer;
@@ -37,17 +38,12 @@ import kafka.consumer.ConsumerIterator;
 import kafka.consumer.KafkaStream;
 import kafka.javaapi.consumer.ConsumerConnector;
 
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
-
-public class KafkaConsumer 
-{
+public class KafkaConsumer {
 	private final Logger log = LoggerFactory.getLogger(KafkaConsumer.class);
 	public static final String REPORT_TOPIC = "monitor-desc-";
 	private String topic;
-	private	static Configuration conf;
-	private static FileSystem fs;
+//	private	static Configuration conf;
+//	private static FileSystem fs;
 	private KafkaProducer<String, String> reportProducer;
 	
 	public KafkaConsumer(String topic){  
@@ -72,10 +68,10 @@ public class KafkaConsumer
 	}
 
 
-	public void report(String topic,Report reportAll,ConsumerConnector consumer,FileSystem hdfs) throws IOException, URISyntaxException, ParserConfigurationException, SAXException {
+	public void report(String topic,Report reportAll,ConsumerConnector consumer,Map<String, Integer> topicCountMap) throws IOException, URISyntaxException, ParserConfigurationException, SAXException {
 		
-		Map<String, Integer> topicCountMap = new HashMap<String, Integer>();
-		topicCountMap.put(topic, 1); // 一次从主题中获取一个数据
+//		Map<String, Integer> topicCountMap = new HashMap<String, Integer>();
+//		topicCountMap.put(topic, 1); // 一次从主题中获取一个数据
 		Map<String, List<KafkaStream<byte[], byte[]>>> messageStreams = consumer.createMessageStreams(topicCountMap);
 		KafkaStream<byte[], byte[]> stream = messageStreams.get(topic).get(0);// 获取每次接收到的这个数据
 		ConsumerIterator<byte[], byte[]> iterator = stream.iterator();
@@ -128,9 +124,9 @@ public class KafkaConsumer
 		
 		KafkaConsumer kafkaConsumer =new KafkaConsumer();
 		List<String> nodeNamesList=kafkaConsumer.getNodesName(kafkaConsumer.getYarnClient());
-		Report reportAll=new Report();
 		ConsumerConnector consumer = kafkaConsumer.createConsumer();
 		FileSystem hdfs=kafkaConsumer.HDFSOperation();
+		Report reportAll=new Report();
 		
 		kafkaConsumer.time(nodeNamesList, reportAll, consumer, hdfs);
 		
@@ -140,34 +136,21 @@ public class KafkaConsumer
 	
 	public void basic(List<String> nodeNamesList, Report reportAll, ConsumerConnector consumer, FileSystem hdfs)
 			throws Exception {
+		Map<String, Integer> topicCountMap = new HashMap<String, Integer>();
 		for (int i = 0; i < nodeNamesList.size(); i++) {
 
-			report(nodeNamesList.get(i), reportAll, consumer, hdfs);// 使用kafka集群中创建好的主题
+			topicCountMap.put(nodeNamesList.get(i), 1);
+			report(nodeNamesList.get(i), reportAll, consumer,topicCountMap);// 使用kafka集群中创建好的主题
 																	// test
 		}
+		System.out.println("汇总后的report是："+new Gson().toJson(reportAll));
 		send(reportAll);
 
 		String storeDir = "/user/vpe.cripac";
 		storeJson(hdfs, storeDir, new Gson().toJson(reportAll));
 	}
 	
-	/**
-	 * 得到yarn
-	 * LANG
-	 * @return
-	 */
-	public YarnClient getYarnClient(){
-		YarnConfiguration conf = new YarnConfiguration();
-//		conf.set("fs.defaultFS", "hdfs://rtask-nod8:8020");
-		conf.set("yarn.resourcemanager.scheduler.address", "rtask-nod8:8030");
-		String hadoopHome = System.getenv("HADOOP_HOME");
-		conf.addResource(new Path(hadoopHome + "/etc/hadoop/core-site.xml"));
-		conf.addResource(new Path(hadoopHome + "/etc/hadoop/yarn-site.xml"));
-		YarnClient yarnClient = YarnClient.createYarnClient();
-		yarnClient.init(conf);
-		yarnClient.start();
-		return yarnClient;
-	}
+	
 	/**
 	 * 为了方便，加入了topic的前缀
 	 * LANG
@@ -188,19 +171,41 @@ public class KafkaConsumer
 		return nodeNamesList;
 	}
 	
-	
+	/**
+	 * 得到yarn
+	 * LANG
+	 * @return
+	 */
+	public YarnClient getYarnClient(){
+//		YarnConfiguration conf = new YarnConfiguration();
+////		conf.set("fs.defaultFS", "hdfs://rtask-nod8:8020");
+//		conf.set("yarn.resourcemanager.scheduler.address", "rtask-nod8:8030");
+//		String hadoopHome = System.getenv("HADOOP_HOME");
+//		conf.addResource(new Path(hadoopHome + "/etc/hadoop/core-site.xml"));
+//		conf.addResource(new Path(hadoopHome + "/etc/hadoop/yarn-site.xml"));
+		YarnClient yarnClient = YarnClient.createYarnClient();
+		yarnClient.init(getConfiguration());
+		yarnClient.start();
+		return yarnClient;
+	}
 	
 	public FileSystem HDFSOperation() throws IOException{
-		conf = new Configuration();
-		conf.set("fs.default.name", "hdfs://172.18.33.84:8020");
-      String hadoopHome = System.getenv("HADOOP_HOME");
-      conf.addResource(new Path(hadoopHome + "/etc/hadoop/core-site.xml"));
-      conf.addResource(new Path(hadoopHome + "/etc/hadoop/yarn-site.xml"));
-      conf.setBoolean("dfs.support.append", true);
+		
+		FileSystem fs = FileSystem.get(getConfiguration());
+		return fs;
+	}
+	
+	public Configuration getConfiguration(){
+		Configuration conf = new Configuration();
+		conf.set("fs.default.name", "hdfs://rtask-nod8:8020");
+		conf.set("yarn.resourcemanager.scheduler.address", "rtask-nod8:8030");
+		String hadoopHome = System.getenv("HADOOP_HOME");
+		conf.addResource(new Path(hadoopHome + "/etc/hadoop/core-site.xml"));
+		conf.addResource(new Path(hadoopHome + "/etc/hadoop/yarn-site.xml"));
+		conf.setBoolean("dfs.support.append", true);
 //      conf.set("fs.hdfs.impl", DistributedFileSystem.class.getName(), "LaS-VPE-Platform-Web");
 //      conf.set("fs.file.impl", LocalFileSystem.class.getName(), "LaS-VPE-Platform-Web");
-		fs = FileSystem.get(conf);
-		return fs;
+		return conf;
 	}
 	
 	public void storeJson(FileSystem hdfs,String storeDir,String reportAllJson) throws IllegalArgumentException, IOException{
