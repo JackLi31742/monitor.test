@@ -1,21 +1,4 @@
-/*
- * This file is part of las-vpe-platform.
- *
- * las-vpe-platform is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * las-vpe-platform is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with las-vpe-platform. If not, see <http://www.gnu.org/licenses/>.
- *
- * Created by ken.yu on 17-3-13.
- */
+
 package org.cripac.isee.vpe.ctrl;
 
 import java.io.BufferedReader;
@@ -560,6 +543,11 @@ public class MonitorThread extends Thread {
 								ContainerId containerId = containerReport.getContainerId();
 								ContainerState containerState = containerReport.getContainerState();
 								Resource allocatedResource = containerReport.getAllocatedResource();
+								String hostName=containerReport.getAssignedNode().getHost();
+								String DiagnosticsInfo=containerReport.getDiagnosticsInfo();
+								String logurlString=containerReport.getLogUrl();
+								String NodeHttpAddress=containerReport.getNodeHttpAddress();
+								System.out.println(containerId+":"+hostName+","+DiagnosticsInfo+","+logurlString+","+NodeHttpAddress);
 
 								ContarinerInfos contarinerInfos = new ContarinerInfos();
 								contarinerInfos.containerId = containerId + "";
