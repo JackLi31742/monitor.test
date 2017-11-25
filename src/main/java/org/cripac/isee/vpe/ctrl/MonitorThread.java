@@ -33,6 +33,7 @@ import org.apache.hadoop.yarn.api.records.YarnApplicationState;
 import org.apache.hadoop.yarn.client.api.YarnClient;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.exceptions.YarnException;
+import org.apache.hadoop.yarn.server.nodemanager.LinuxContainerExecutor;
 import org.apache.hadoop.yarn.util.ConverterUtils;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -61,8 +62,8 @@ public class MonitorThread extends Thread {
     private KafkaProducer<String, String> reportProducer;
     private Runtime runtime = Runtime.getRuntime();
     private OperatingSystemMXBean osBean = ManagementFactory.getPlatformMXBean(OperatingSystemMXBean.class);
-
-
+    private YarnClient yarnClient;
+    private LinuxContainerExecutor linuxContainerExecutor;
     /**
      * native 方法
      * LANG
@@ -105,7 +106,8 @@ public class MonitorThread extends Thread {
             throws MalformedObjectNameException, ReflectionException, InstanceNotFoundException {
         this.logger = logger;
         this.reportProducer = new KafkaProducer<>(propCenter.getKafkaProducerProp(true));
-
+        yarnClient = getYarnClient();
+        linuxContainerExecutor=new LinuxContainerExecutor();
         KafkaHelper.createTopic(propCenter.zkConn, propCenter.zkSessionTimeoutMs, propCenter.zkConnectionTimeoutMS,
                 REPORT_TOPIC+getServerName(),
                 propCenter.kafkaNumPartitions, propCenter.kafkaReplFactor);
@@ -398,7 +400,7 @@ public class MonitorThread extends Thread {
     
     
     public void getClusterReport(Report report)throws YarnException, IOException{
-		YarnClient yarnClient = getYarnClient();
+		
 		getNodes(report, yarnClient);
 		appReport(report,yarnClient);
 	}
@@ -545,11 +547,12 @@ public class MonitorThread extends Thread {
 								ContainerState containerState = containerReport.getContainerState();
 								Resource allocatedResource = containerReport.getAllocatedResource();
 								String hostName=containerReport.getAssignedNode().getHost();
+								String pid=linuxContainerExecutor.getProcessId(containerId);
 								String containerIdStr = ConverterUtils.toString(containerId);
-								System.out.println(containerId+":"+hostName+":"+containerIdStr);
+								System.out.println(containerIdStr+":"+hostName+":"+pid);
 
 								ContarinerInfos contarinerInfos = new ContarinerInfos();
-								contarinerInfos.containerId = containerId + "";
+								contarinerInfos.containerId = containerIdStr;
 								contarinerInfos.allocatedCpu = allocatedResource.getVirtualCores();
 								contarinerInfos.allocatedMemory = allocatedResource.getMemory();
 								contarinerInfos.state = containerState + "";
@@ -561,6 +564,7 @@ public class MonitorThread extends Thread {
 			}
 		}
 	}
+	
 	
 	/**
 	 * 得到yarn
